@@ -19,6 +19,7 @@ import { PalettePreview } from "./components/PalettePreview";
 import { SystemInsights } from "./components/SystemInsights";
 import { SystemCurveOverview } from "./components/SystemCurveOverview";
 import { exportSystem } from "./engines/exportEngine";
+import { FigmaImportError } from "./engines/importEngine";
 import { generateSystemInsights } from "./engines/insightEngine";
 import { suggestPaletteNameFromHue } from "./engines/namingEngine";
 import { hexToOklch, hslToHex } from "./engines/colorConversions";
@@ -290,6 +291,70 @@ function AddPaletteForm({
   );
 }
 
+// ─── Import from Figma ─────────────────────────────────────────────────────────
+
+function ImportFigmaForm({
+  onImport,
+  onCancel,
+}: {
+  onImport: (json: string) => void;
+  onCancel: () => void;
+}) {
+  const [json, setJson] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const handleImport = () => {
+    const trimmed = json.trim();
+    if (!trimmed) {
+      setError("Pega el JSON exportado desde Figma.");
+      return;
+    }
+    try {
+      onImport(trimmed);
+    } catch (err) {
+      setError(
+        err instanceof FigmaImportError ? err.message : "No se pudo importar el JSON.",
+      );
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <textarea
+        value={json}
+        onChange={(e) => {
+          setJson(e.target.value);
+          if (error) setError(null);
+        }}
+        placeholder='Pega aquí el JSON de variables de Figma…'
+        rows={12}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          fontFamily: "ui-monospace, monospace",
+          fontSize: 11,
+          lineHeight: 1.45,
+          padding: 10,
+          borderRadius: 8,
+          border: error ? "1px solid #c62828" : "1px solid rgba(0,0,0,0.15)",
+          resize: "vertical",
+        }}
+      />
+      {error && (
+        <p style={{ margin: 0, fontSize: 12, color: "#c62828" }}>{error}</p>
+      )}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <Button variant="secondary" fillStyle="outline" onPress={onCancel}>
+          Cancelar
+        </Button>
+        <Button variant="accent" onPress={handleImport}>
+          Importar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Export button ─────────────────────────────────────────────────────────────
 
 function ExportButton({ onExport }: { onExport: (format: ExportFormat) => void }) {
@@ -362,6 +427,7 @@ export default function App() {
   const sys = useSystem();
   const [panelMode, setPanelMode] = useState<PanelMode>({ kind: "none" });
   const [addDialogType, setAddDialogType] = useState<PaletteType | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(360);
 
   if (!sys.system) {
@@ -428,6 +494,12 @@ export default function App() {
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
+  const handleImportFigma = (json: string) => {
+    sys.importFromFigma(json);
+    setImportDialogOpen(false);
+    setPanelMode({ kind: "none" });
+  };
+
   const handleSidebarResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -485,7 +557,16 @@ export default function App() {
               Primitivos
             </span>
           </div>
-          <ExportButton onExport={handleExport} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Button
+              variant="secondary"
+              fillStyle="outline"
+              onPress={() => setImportDialogOpen(true)}
+            >
+              Importar Figma
+            </Button>
+            <ExportButton onExport={handleExport} />
+          </div>
         </header>
 
         {/* ── Body ── */}
@@ -600,6 +681,20 @@ export default function App() {
             <div style={{ height: 20 }} />
           </main>
         </div>
+
+        <DialogContainer onDismiss={() => setImportDialogOpen(false)}>
+          {importDialogOpen && (
+            <Dialog size="M" isDismissible>
+              <Heading>Importar desde Figma</Heading>
+              <Content>
+                <ImportFigmaForm
+                  onImport={handleImportFigma}
+                  onCancel={() => setImportDialogOpen(false)}
+                />
+              </Content>
+            </Dialog>
+          )}
+        </DialogContainer>
 
         <DialogContainer onDismiss={() => setAddDialogType(null)}>
           {addDialogType && (

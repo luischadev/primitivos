@@ -14,6 +14,7 @@ import {
   type PaletteType,
 } from "../engines/types";
 import { generateSystem } from "../engines/systemEngine";
+import { adaptPalettesFromFigmaJson } from "../engines/importEngine";
 import { suggestPaletteNameFromHue, uniquePaletteName } from "../engines/namingEngine";
 import { getChromaPeakIndexByHue } from "../engines/scaleEngine";
 
@@ -229,6 +230,15 @@ export function useSystem() {
    * - Easing: edges mode, strength 0.15
    * - Resets per-palette multipliers and drift to safe defaults
    */
+  /** Replace all palettes with configs adapted from a Figma variables JSON export. */
+  const importFromFigma = useCallback((json: string) => {
+    setConfig((prev) => {
+      const palettes = adaptPalettesFromFigmaJson(json, prev.globalScale);
+      return { ...prev, palettes };
+    });
+    setSelectedPaletteId(null);
+  }, []);
+
   const applyAtlassianPreset = useCallback(() => {
     setConfig((prev) => ({
       ...prev,
@@ -269,6 +279,7 @@ export function useSystem() {
     updateChromaCurve,
     updateLightnessCurve,
     applyAtlassianPreset,
+    importFromFigma,
     getChromaPeakIndexByHue,
     fixChromaShape,
     fixChromaPeak,
