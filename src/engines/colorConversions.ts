@@ -130,6 +130,23 @@ export function linearSRGBToOklab(r: number, g: number, b: number): { L: number;
 }
 
 /**
+ * Convert HSL (degrees, %, %) to a 6-digit hex string.
+ * Standard CSS HSL math — keeps saturation/lightness fixed so the wheel
+ * represents the same hue space a designer sees in Figma / sRGB tools.
+ */
+export function hslToHex(h: number, s: number, l: number): string {
+  const sn = s / 100;
+  const ln = l / 100;
+  const a = sn * Math.min(ln, 1 - ln);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = ln - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(color * 255).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+/**
  * Convert a 6-digit hex color to OKLCH.
  */
 export function hexToOklch(hex: string): OKLCHColor {

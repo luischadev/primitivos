@@ -10,6 +10,7 @@ import { getChromaPeakIndexByHue } from "../engines/scaleEngine";
 interface Props {
   palettes: GeneratedPalette[];
   selectedPaletteId: string | null;
+  compact?: boolean;
 }
 
 const W = 600;
@@ -29,7 +30,7 @@ function paletteLineColor(palette: GeneratedPalette, selected: boolean): string 
     : (midColor?.hex ?? "#aaa");
 }
 
-export function ChromaComparisonChart({ palettes, selectedPaletteId }: Props) {
+export function ChromaComparisonChart({ palettes, selectedPaletteId, compact = false }: Props) {
   if (palettes.length === 0) return null;
 
   const n = palettes[0].colors.length;
@@ -47,7 +48,7 @@ export function ChromaComparisonChart({ palettes, selectedPaletteId }: Props) {
   });
 
   return (
-    <div style={{ marginTop: 16 }}>
+    <div style={{ marginTop: compact ? 0 : 16, minWidth: 0 }}>
       <div
         style={{
           display: "flex",
@@ -58,9 +59,6 @@ export function ChromaComparisonChart({ palettes, selectedPaletteId }: Props) {
       >
         <span style={{ fontSize: 11, fontWeight: 700, opacity: 0.45, textTransform: "uppercase", letterSpacing: "0.07em" }}>
           Comparación de curvas C
-        </span>
-        <span style={{ fontSize: 10, opacity: 0.35 }}>
-          ● = peak real · ◇ = peak esperado por hue
         </span>
       </div>
       <svg

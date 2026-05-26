@@ -1,169 +1,305 @@
 // =============================================================================
 // src/App.tsx
-// Primitive Palette System Builder — main application shell.
+// Primitive Palette System Builder.
+// Left sidebar: controls. Main area: palettes.
 // =============================================================================
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, type PointerEvent } from "react";
 import { Provider } from "@react-spectrum/s2/Provider";
 import { Button } from "@react-spectrum/s2/Button";
-import { ActionButton } from "@react-spectrum/s2/ActionButton";
-import {
-  Disclosure,
-  DisclosureTitle,
-  DisclosurePanel,
-} from "@react-spectrum/s2/Disclosure";
+import { ColorWheel } from "@react-spectrum/s2/ColorWheel";
+import { Slider } from "@react-spectrum/s2/Slider";
+import { TextField } from "@react-spectrum/s2/TextField";
+import { Dialog, DialogContainer, Heading, Content } from "@react-spectrum/s2/Dialog";
 import { useSystem } from "./hooks/useSystem";
 import { PaletteMatrix } from "./components/PaletteMatrix";
 import { GlobalControls } from "./components/GlobalControls";
 import { PaletteEditor } from "./components/PaletteEditor";
-import { CrossStepAudit } from "./components/CrossStepAudit";
+import { PalettePreview } from "./components/PalettePreview";
 import { SystemInsights } from "./components/SystemInsights";
+import { SystemCurveOverview } from "./components/SystemCurveOverview";
 import { exportSystem } from "./engines/exportEngine";
-import { hexToOklch } from "./engines/colorConversions";
 import { generateSystemInsights } from "./engines/insightEngine";
-import type { ExportFormat } from "./engines/types";
+import { suggestPaletteNameFromHue } from "./engines/namingEngine";
+import { hexToOklch, hslToHex } from "./engines/colorConversions";
+import { buildGlobalStepValues } from "./engines/scaleEngine";
+import { generatePalette } from "./engines/paletteEngine";
+import { CHROMATIC_STEPS, NEUTRAL_STEPS } from "./engines/types";
+import type { ExportFormat, GlobalScaleConfig, PaletteConfig, PaletteType } from "./engines/types";
 
-// ─── Add palette dialog (inline, simple) ─────────────────────────────────────
+// ─── Panel mode ───────────────────────────────────────────────────────────────
 
-function AddPaletteBar({
-  onAdd,
-  onClose,
+type PanelMode =
+  | { kind: "none" }
+  | { kind: "edit" };
+
+// ─── Add palette form ─────────────────────────────────────────────────────────
+
+function AddPaletteForm({
+  paletteType,
+  globalScale,
+  onConfirm,
+  onCancel,
 }: {
-  onAdd: (hue: number) => void;
-  onClose: () => void;
+  paletteType: PaletteType;
+  globalScale: GlobalScaleConfig;
+  onConfirm: (
+    hue: number,
+    name: string,
+    options: {
+      chromaMultiplier: number;
+      hueDriftLight: number;
+      hueDriftDark: number;
+    },
+  ) => void;
+  onCancel: () => void;
 }) {
-  const [hue, setHue] = useState(180);
+  // hslHue: visual hue on the wheel (sRGB/HSL space, what the user sees)
+  // oklchHue: derived via HEX→OKLCH, what the engine uses
+  const [hslHue, setHslHue] = useState(220);
+  const [oklchHue, setOklchHue] = useState(() => {
+    const { h } = hexToOklch(hslToHex(220, 80, 50));
+    return Math.round(h);
+  });
+  const [name, setName] = useState(() => suggestPaletteNameFromHue(
+    Math.round(hexToOklch(hslToHex(220, 80, 50)).h),
+  ));
+  const [nameEdited, setNameEdited] = useState(false);
   const [hexInput, setHexInput] = useState("");
   const [hexError, setHexError] = useState(false);
+  const [chromaMultiplier, setChromaMultiplier] = useState(1);
+  const [hueDriftLight, setHueDriftLight] = useState(0);
+  const [hueDriftDark, setHueDriftDark] = useState(0);
 
-  const handleAddFromHue = () => {
-    onAdd(hue);
-    onClose();
+  const previewPalette = useMemo(() => {
+    const steps = buildGlobalStepValues(
+      globalScale,
+      paletteType === "neutral" ? NEUTRAL_STEPS : CHROMATIC_STEPS,
+      paletteType,
+    );
+
+    const config: PaletteConfig = {
+      id: "preview",
+      name: name.trim() || "preview",
+      type: paletteType,
+      anchor: {
+        l: 0.65,
+        c: paletteType === "neutral" ? 0.005 : 0.17,
+        h: paletteType === "neutral" ? 250 : oklchHue,
+      },
+      chromaMultiplier,
+      hueDriftLight,
+      hueDriftDark,
+      ...(paletteType === "neutral" ? { neutralChroma: 0.005 } : {}),
+    };
+
+    return generatePalette(steps, config, {
+      peak: globalScale.chromaCurve.peak,
+      edgeFactor: globalScale.chromaCurve.edgeFactor,
+      peakMode: globalScale.chromaCurve.peakMode,
+      steps: CHROMATIC_STEPS,
+    });
+  }, [chromaMultiplier, globalScale, oklchHue, hueDriftDark, hueDriftLight, name, paletteType]);
+
+  /** Called from wheel drag: input is HSL hue, we derive OKLCH hue via hex. */
+  const applyHslHue = (hsl: number) => {
+    setHslHue(hsl);
+    const hex = hslToHex(hsl, 80, 50);
+    const { h: oklch } = hexToOklch(hex);
+    const rounded = Math.round(oklch);
+    setOklchHue(rounded);
+    if (!nameEdited) setName(suggestPaletteNameFromHue(rounded));
   };
 
-  const handleAddFromHex = () => {
-    const h = hexInput.trim();
-    const isValid = /^#[0-9a-fA-F]{6}$/.test(h);
-    if (!isValid) {
+  const handleHexApply = () => {
+    const raw = hexInput.trim();
+    const valid = /^#[0-9a-fA-F]{6}$/.test(raw);
+    if (!valid) {
       setHexError(true);
-      setTimeout(() => setHexError(false), 2000);
+      setTimeout(() => setHexError(false), 1400);
       return;
     }
-    const { h: hueVal } = hexToOklch(h);
-    onAdd(Math.round(hueVal));
-    onClose();
+    // Hex input → derive both OKLCH hue (for engine) and HSL hue (for wheel position)
+    const { h: oklch } = hexToOklch(raw);
+    const rounded = Math.round(oklch);
+    setOklchHue(rounded);
+    // Find HSL hue whose generated OKLCH hue is closest, to sync the wheel visually
+    let bestHsl = 0, bestDiff = 360;
+    for (let hsl = 0; hsl < 360; hsl++) {
+      const { h } = hexToOklch(hslToHex(hsl, 80, 50));
+      const diff = Math.abs(((h - oklch + 540) % 360) - 180);
+      if (diff < bestDiff) { bestDiff = diff; bestHsl = hsl; }
+    }
+    setHslHue(bestHsl);
+    if (!nameEdited) setName(suggestPaletteNameFromHue(rounded));
+    setHexInput("");
   };
 
   return (
-    <div
-      style={{
-        backgroundColor: "white",
-        borderRadius: 12,
-        padding: "16px 20px",
-        display: "flex",
-        alignItems: "center",
-        gap: 20,
-        flexWrap: "wrap",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-      }}
-    >
-      {/* From hue */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, opacity: 0.7 }}>
-          Desde hue
-        </label>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <div
-            style={{
-              width: 24,
-              height: 24,
-              borderRadius: "50%",
-              background: `hsl(${hue}, 70%, 50%)`,
-              border: "1px solid rgba(0,0,0,0.12)",
-            }}
-          />
-          <input
-            type="range"
-            min={0}
-            max={359}
-            value={hue}
-            onChange={(e) => setHue(Number(e.target.value))}
-            style={{ width: 120 }}
-            aria-label="Hue"
-          />
-          <span style={{ fontSize: 12, fontFamily: "monospace", opacity: 0.7, width: 30 }}>
-            {hue}°
-          </span>
-        </div>
-        <Button variant="accent" onPress={handleAddFromHue}>
-          Agregar
-        </Button>
-      </div>
-
-      {/* Divider */}
-      <div style={{ fontSize: 11, opacity: 0.35 }}>ó</div>
-
-      {/* From HEX */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <label style={{ fontSize: 12, fontWeight: 600, opacity: 0.7 }}>
-          Desde HEX
-        </label>
-        <input
-          type="text"
-          placeholder="#ff5500"
-          value={hexInput}
-          onChange={(e) => setHexInput(e.target.value)}
-          maxLength={7}
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {/* Hue wheel (chromatic only) */}
+      {paletteType === "chromatic" && (
+        <div
           style={{
-            fontFamily: "monospace",
-            fontSize: 13,
-            padding: "4px 10px",
-            border: `1px solid ${hexError ? "#dc3545" : "rgba(0,0,0,0.2)"}`,
-            borderRadius: 6,
-            width: 100,
-            outline: "none",
-          }}
-          aria-label="HEX color"
-        />
-        <Button variant="secondary" fillStyle="outline" onPress={handleAddFromHex}>
-          Agregar
-        </Button>
-      </div>
-
-      {/* Neutral */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <Button
-          variant="secondary"
-          fillStyle="outline"
-          onPress={() => {
-            onAdd(-1); // signal neutral
-            onClose();
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 20,
           }}
         >
-          + Neutral
-        </Button>
+          <ColorWheel
+            value={`hsl(${hslHue}, 80%, 50%)`}
+            onChange={(color) => {
+              const h = Math.round(
+                (color as { getChannelValue: (ch: string) => number }).getChannelValue("hue"),
+              );
+              applyHslHue(h);
+            }}
+            size={186}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: "50%",
+                background: hslToHex(hslHue, 70, 50),
+                border: "1px solid rgba(0,0,0,0.12)",
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: 12, opacity: 0.55, fontFamily: "monospace" }}>
+              H {hslHue}° → OKLCH {oklchHue}°
+            </span>
+          </div>
+
+          {/* Hex import shortcut */}
+          <div style={{ display: "flex", gap: 6, width: "100%" }}>
+            <input
+              type="text"
+              placeholder="#ff5500"
+              value={hexInput}
+              onChange={(e) => setHexInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleHexApply()}
+              maxLength={7}
+              style={{
+                flex: 1,
+                fontFamily: "monospace",
+                fontSize: 12,
+                padding: "5px 10px",
+                border: `1px solid ${hexError ? "#dc3545" : "rgba(0,0,0,0.18)"}`,
+                borderRadius: 6,
+                outline: "none",
+                backgroundColor: "transparent",
+              }}
+              aria-label="Importar desde HEX"
+            />
+            <button
+              onClick={handleHexApply}
+              style={{
+                padding: "5px 10px",
+                border: "1px solid rgba(0,0,0,0.18)",
+                borderRadius: 6,
+                backgroundColor: "transparent",
+                cursor: "pointer",
+                fontSize: 11,
+                fontFamily: "inherit",
+                opacity: 0.6,
+              }}
+            >
+              Usar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Name */}
+      <div style={{ marginBottom: 20 }}>
+        <TextField
+          label="Nombre de la paleta"
+          value={name}
+          onChange={(v) => {
+            setName(v);
+            setNameEdited(true);
+          }}
+        />
       </div>
 
-      {/* Cancel */}
-      <ActionButton aria-label="Cancelar" onPress={onClose} isQuiet>
-        ✕
-      </ActionButton>
+      <PalettePreview palette={previewPalette} />
+
+      {paletteType === "chromatic" && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+            marginBottom: 20,
+          }}
+        >
+          <Slider
+            label="Intensidad de color"
+            value={chromaMultiplier}
+            onChange={setChromaMultiplier}
+            minValue={0.2}
+            maxValue={1.8}
+            step={0.05}
+            formatOptions={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }}
+            isEmphasized
+          />
+          <Slider
+            label="Hue drift → claros (°)"
+            value={hueDriftLight}
+            onChange={setHueDriftLight}
+            minValue={-30}
+            maxValue={30}
+            step={1}
+            formatOptions={{ signDisplay: "always", maximumFractionDigits: 0 }}
+          />
+          <Slider
+            label="Hue drift → oscuros (°)"
+            value={hueDriftDark}
+            onChange={setHueDriftDark}
+            minValue={-30}
+            maxValue={30}
+            step={1}
+            formatOptions={{ signDisplay: "always", maximumFractionDigits: 0 }}
+          />
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <Button
+          variant="accent"
+          onPress={() =>
+            onConfirm(oklchHue, name, {
+              chromaMultiplier,
+              hueDriftLight,
+              hueDriftDark,
+            })
+          }
+        >
+          Crear paleta
+        </Button>
+        <Button variant="secondary" fillStyle="outline" onPress={onCancel}>
+          Cancelar
+        </Button>
+      </div>
     </div>
   );
 }
 
-// ─── Export menu ─────────────────────────────────────────────────────────────
+// ─── Export button ─────────────────────────────────────────────────────────────
 
 function ExportButton({ onExport }: { onExport: (format: ExportFormat) => void }) {
   const [open, setOpen] = useState(false);
-
   const formats: { key: ExportFormat; label: string }[] = [
-    { key: "json-simple", label: "JSON simple (name.step.hex)" },
-    { key: "json-full", label: "JSON completo (OKLCH + gamut)" },
+    { key: "json-simple", label: "JSON simple" },
+    { key: "json-full", label: "JSON completo (OKLCH)" },
     { key: "css-vars", label: "CSS custom properties" },
-    { key: "figma-variables", label: "Variables Figma (JSON)" },
+    { key: "figma-variables", label: "Variables Figma" },
   ];
-
   return (
     <div style={{ position: "relative" }}>
       <Button variant="secondary" fillStyle="outline" onPress={() => setOpen((v) => !v)}>
@@ -172,11 +308,7 @@ function ExportButton({ onExport }: { onExport: (format: ExportFormat) => void }
       {open && (
         <>
           <div
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 9,
-            }}
+            style={{ position: "fixed", inset: 0, zIndex: 9 }}
             onClick={() => setOpen(false)}
           />
           <div
@@ -184,12 +316,12 @@ function ExportButton({ onExport }: { onExport: (format: ExportFormat) => void }
               position: "absolute",
               top: "calc(100% + 6px)",
               right: 0,
+              zIndex: 10,
               backgroundColor: "white",
               borderRadius: 10,
-              boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.14)",
               padding: 6,
-              zIndex: 10,
-              minWidth: 240,
+              minWidth: 220,
             }}
           >
             {formats.map((f) => (
@@ -211,12 +343,8 @@ function ExportButton({ onExport }: { onExport: (format: ExportFormat) => void }
                   borderRadius: 6,
                   fontFamily: "inherit",
                 }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.backgroundColor = "#f5f5f5")
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.backgroundColor = "transparent")
-                }
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f5f5f5")}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
               >
                 {f.label}
               </button>
@@ -228,11 +356,13 @@ function ExportButton({ onExport }: { onExport: (format: ExportFormat) => void }
   );
 }
 
-// ─── App ─────────────────────────────────────────────────────────────────────
+// ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const sys = useSystem();
-  const [showAddBar, setShowAddBar] = useState(false);
+  const [panelMode, setPanelMode] = useState<PanelMode>({ kind: "none" });
+  const [addDialogType, setAddDialogType] = useState<PaletteType | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(360);
 
   if (!sys.system) {
     return (
@@ -244,113 +374,144 @@ export default function App() {
     );
   }
 
-  const { system, config, selectedPaletteId, setSelectedPaletteId } = sys;
+  const { system, config } = sys;
   const globalScale = config.globalScale;
+  const chromaticPalettes = system.palettes.filter((p) => p.config.type === "chromatic");
 
   const insights = useMemo(
-    () => generateSystemInsights(system, globalScale),
+    () =>
+      chromaticPalettes.length > 0
+        ? generateSystemInsights(system, globalScale)
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [system, globalScale],
   );
 
-  const chromaticPalettes = system.palettes.filter((p) => p.config.type === "chromatic");
+  // ── Selection handling ───────────────────────────────────────────────────
+  const handleSelectPalette = (id: string) => {
+    if (panelMode.kind === "edit" && sys.selectedPaletteId === id) {
+      // Toggle: click same palette closes the panel
+      setPanelMode({ kind: "none" });
+      sys.setSelectedPaletteId(null);
+    } else {
+      setPanelMode({ kind: "edit" });
+      sys.setSelectedPaletteId(id);
+    }
+  };
+
+  const handleStartAdd = (paletteType: PaletteType) => {
+    sys.setSelectedPaletteId(null);
+    setPanelMode({ kind: "none" });
+    setAddDialogType(paletteType);
+  };
+
+  const handleConfirmAdd = (
+    hue: number,
+    name: string,
+    options: {
+      chromaMultiplier: number;
+      hueDriftLight: number;
+      hueDriftDark: number;
+    },
+  ) => {
+    const type = addDialogType ?? "chromatic";
+    if (type === "neutral") {
+      sys.addPalette({ l: 0.65, c: 0.005, h: 250 }, "neutral", name);
+    } else {
+      sys.addPalette({ l: 0.65, c: 0.17, h: hue }, "chromatic", name, options);
+    }
+    setAddDialogType(null);
+  };
 
   const handleExport = (format: ExportFormat) => {
     const text = exportSystem(system, format);
     navigator.clipboard.writeText(text).catch(() => {});
-    // Could show a toast here; for now just clipboard
   };
 
-  const handleAddPalette = (hueOrSignal: number) => {
-    if (hueOrSignal === -1) {
-      sys.addPalette({ l: 0.55, c: 0.005, h: 250 }, "neutral");
-    } else {
-      // Use a mid-range anchor L that places the color near step 500
-      sys.addPalette({ l: 0.65, c: 0.17, h: hueOrSignal }, "chromatic");
-    }
+  const handleSidebarResizeStart = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handleMove = (moveEvent: globalThis.PointerEvent) => {
+      const maxWidth = Math.min(560, window.innerWidth * 0.48);
+      const nextWidth = startWidth + (moveEvent.clientX - startX);
+      setSidebarWidth(Math.max(280, Math.min(maxWidth, nextWidth)));
+    };
+
+    const handleUp = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp, { once: true });
   };
 
   return (
     <Provider locale="es-ES">
-      <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-
-        {/* ── Header ────────────────────────────────────────────────────────── */}
+      <div
+        style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}
+      >
+        {/* ── Header ── */}
         <header
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             padding: "0 24px",
-            height: 52,
-            borderBottom: "1px solid rgba(0,0,0,0.09)",
-            backgroundColor: "white",
+            height: 50,
             flexShrink: 0,
+            borderBottom: "1px solid rgba(0,0,0,0.08)",
+            backgroundColor: "white",
           }}
         >
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={{ fontSize: 15, fontWeight: 700 }}>Color System Builder</span>
-            <span style={{ fontSize: 11, opacity: 0.4 }}>
-              {system.palettes.length} paleta{system.palettes.length !== 1 ? "s" : ""} · 12 pasos cromáticos ·
-              15 pasos neutrales
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {/* Audit summary badge */}
-            {(system.chromaticAudit.totalLWarnings > 0 ||
-              system.chromaticAudit.totalCWarnings > 0 ||
-              system.neutralAudit.totalLWarnings > 0) && (
-              <span
-                style={{
-                  fontSize: 11,
-                  padding: "3px 9px",
-                  borderRadius: 99,
-                  backgroundColor: "#fff3cd",
-                  color: "#856404",
-                  fontWeight: 600,
-                }}
-              >
-                ⚠{" "}
-                {system.chromaticAudit.totalLWarnings +
-                  system.chromaticAudit.totalCWarnings +
-                  system.neutralAudit.totalLWarnings}{" "}
-                audit
-              </span>
-            )}
-            <Button
-              variant="accent"
-              onPress={() => setShowAddBar((v) => !v)}
-            >
-              + Agregar paleta
-            </Button>
-            <ExportButton onExport={handleExport} />
-          </div>
-        </header>
-
-        {/* ── Body ──────────────────────────────────────────────────────────── */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-
-          {/* ── Sidebar ─────────────────────────────────────────────────────── */}
-          <aside
-            style={{
-              width: 300,
-              flexShrink: 0,
-              borderRight: "1px solid rgba(0,0,0,0.08)",
-              overflowY: "auto",
-              padding: "20px 18px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 0,
-              backgroundColor: "#fafafa",
-            }}
-          >
-            {/* Global controls */}
-            <div
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span
               style={{
-                backgroundColor: "white",
-                borderRadius: 12,
-                padding: "16px",
-                marginBottom: 12,
+                fontSize: 14,
+                fontWeight: 800,
+                letterSpacing: "-0.01em",
+                color: "#111",
               }}
             >
+              Primitivos
+            </span>
+          </div>
+          <ExportButton onExport={handleExport} />
+        </header>
+
+        {/* ── Body ── */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          {/* ── Left controls panel ── */}
+          <aside
+            style={{
+              width: sidebarWidth,
+              flexShrink: 0,
+              overflowY: "auto",
+              padding: "18px",
+              backgroundColor: "white",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 14,
+                  fontWeight: 800,
+                  letterSpacing: "-0.01em",
+                }}
+              >
+                Controles
+              </h2>
+
               <GlobalControls
                 globalScale={globalScale}
                 onUpdateLightnessRange={sys.updateLightnessRange}
@@ -359,118 +520,24 @@ export default function App() {
                 onApplyAtlassianPreset={sys.applyAtlassianPreset}
               />
             </div>
-
-            {/* Palette list */}
-            {system.palettes.length > 0 && (
-              <div
-                style={{
-                  backgroundColor: "white",
-                  borderRadius: 12,
-                  overflow: "hidden",
-                  marginBottom: 12,
-                }}
-              >
-                <Disclosure defaultExpanded>
-                  <DisclosureTitle level={3}>Paletas</DisclosureTitle>
-                  <DisclosurePanel>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingBottom: 4 }}>
-                      {system.palettes.map((p) => {
-                        const midColor = p.colors[Math.floor(p.colors.length / 2)];
-                        const isSelected = p.config.id === selectedPaletteId;
-                        return (
-                          <button
-                            key={p.config.id}
-                            onClick={() =>
-                              setSelectedPaletteId(isSelected ? null : p.config.id)
-                            }
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              padding: "7px 10px",
-                              borderRadius: 8,
-                              border: "none",
-                              cursor: "pointer",
-                              backgroundColor: isSelected
-                                ? "rgba(0,102,204,0.08)"
-                                : "transparent",
-                              fontFamily: "inherit",
-                              textAlign: "left",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: 16,
-                                height: 16,
-                                borderRadius: "50%",
-                                backgroundColor: midColor?.hex ?? "#ccc",
-                                flexShrink: 0,
-                                border: "1px solid rgba(0,0,0,0.1)",
-                              }}
-                            />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div
-                                style={{
-                                  fontSize: 13,
-                                  fontWeight: isSelected ? 700 : 500,
-                                  color: isSelected ? "#0066cc" : "inherit",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {p.config.name}
-                              </div>
-                              <div style={{ fontSize: 10, opacity: 0.45 }}>
-                                {p.config.type} · H {Math.round(p.config.anchor.h)}°
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </DisclosurePanel>
-                </Disclosure>
-              </div>
-            )}
-
-            {/* Palette editor (selected palette) */}
-            {sys.selectedPalette && (
-              <div
-                style={{
-                  backgroundColor: "white",
-                  borderRadius: 12,
-                  padding: 16,
-                }}
-              >
-                <p
-                  style={{
-                    margin: "0 0 14px",
-                    fontSize: 10,
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.09em",
-                    opacity: 0.45,
-                  }}
-                >
-                  Editar paleta
-                </p>
-                <PaletteEditor
-                  paletteConfig={sys.selectedPalette}
-                  generatedPalette={sys.selectedGenerated}
-                  onUpdate={(patch) => sys.updatePalette(sys.selectedPalette!.id, patch)}
-                  onDuplicate={() => {
-                    sys.duplicatePalette(sys.selectedPalette!.id);
-                  }}
-                  onDelete={() => {
-                    sys.removePalette(sys.selectedPalette!.id);
-                  }}
-                />
-              </div>
-            )}
           </aside>
 
-          {/* ── Main content ─────────────────────────────────────────────────── */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Ajustar ancho de controles"
+            title="Arrastra para ajustar el ancho"
+            onPointerDown={handleSidebarResizeStart}
+            onDoubleClick={() => setSidebarWidth(360)}
+            style={{
+              width: 8,
+              flexShrink: 0,
+              cursor: "col-resize",
+              backgroundColor: "transparent",
+            }}
+          />
+
+          {/* ── Main content ── */}
           <main
             style={{
               flex: 1,
@@ -478,61 +545,110 @@ export default function App() {
               padding: "20px 24px",
               display: "flex",
               flexDirection: "column",
-              gap: 16,
-              backgroundColor: "#f4f4f4",
+              gap: 10,
+              backgroundColor: "#f3f3f3",
             }}
           >
-            {/* Add palette bar */}
-            {showAddBar && (
-              <AddPaletteBar
-                onAdd={handleAddPalette}
-                onClose={() => setShowAddBar(false)}
-              />
-            )}
-
-            {/* System insights */}
             {chromaticPalettes.length > 0 && (
-              <SystemInsights
-                insights={insights}
-                onFixChromaShape={() =>
-                  sys.fixChromaShape(insights.chromaShape.affectedPalettes)
-                }
-                onFixChromaPeak={() => sys.fixChromaPeak()}
-                onFixLightnessRange={() => sys.fixLightnessRange()}
-              />
+              <div
+                style={{
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 2,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                  paddingBottom: 10,
+                  backgroundColor: "#f3f3f3",
+                }}
+              >
+                {insights && (
+                  <SystemInsights
+                    insights={insights}
+                    onFixChromaShape={() =>
+                      sys.fixChromaShape(insights.chromaShape.affectedPalettes)
+                    }
+                    onFixLightnessRange={() => sys.fixLightnessRange()}
+                  />
+                )}
+                <SystemCurveOverview
+                  globalScale={globalScale}
+                  chromaticPalettes={chromaticPalettes}
+                  selectedPaletteId={sys.selectedPaletteId}
+                />
+              </div>
             )}
 
-            {/* Palette matrix */}
+            {/* Palette matrix — the primary workspace */}
             <div
               style={{
                 backgroundColor: "white",
                 borderRadius: 14,
-                padding: "20px 20px 16px",
-                boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+                padding: "18px 18px 14px",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
               }}
             >
               <PaletteMatrix
                 system={system}
-                selectedPaletteId={selectedPaletteId}
-                onSelectPalette={(id) =>
-                  setSelectedPaletteId(selectedPaletteId === id ? null : id)
-                }
+                selectedPaletteId={sys.selectedPaletteId}
+                onSelectPalette={handleSelectPalette}
+                onAddChromatic={() => handleStartAdd("chromatic")}
+                onAddNeutral={() => handleStartAdd("neutral")}
               />
             </div>
 
-            <CrossStepAudit
-              title="Consistencia — paletas de color"
-              audit={system.chromaticAudit}
-            />
-            <CrossStepAudit
-              title="Consistencia — paletas neutrales"
-              audit={system.neutralAudit}
-              showChroma={false}
-            />
-
-            <div style={{ height: 32 }} />
+            <div style={{ height: 20 }} />
           </main>
         </div>
+
+        <DialogContainer onDismiss={() => setAddDialogType(null)}>
+          {addDialogType && (
+            <Dialog size="S" isDismissible>
+              <Heading>
+                {addDialogType === "chromatic" ? "Nueva paleta de color" : "Nueva paleta neutral"}
+              </Heading>
+              <Content>
+                <AddPaletteForm
+                  paletteType={addDialogType}
+                  globalScale={globalScale}
+                  onConfirm={handleConfirmAdd}
+                  onCancel={() => setAddDialogType(null)}
+                />
+              </Content>
+            </Dialog>
+          )}
+        </DialogContainer>
+
+        <DialogContainer
+          onDismiss={() => {
+            setPanelMode({ kind: "none" });
+            sys.setSelectedPaletteId(null);
+          }}
+        >
+          {panelMode.kind === "edit" && sys.selectedPalette && (
+            <Dialog size="S" isDismissible>
+              <Heading>Editar paleta</Heading>
+              <Content>
+                <PaletteEditor
+                  paletteConfig={sys.selectedPalette}
+                  generatedPalette={sys.selectedGenerated}
+                  onUpdate={(patch) => sys.updatePalette(sys.selectedPalette!.id, patch)}
+                  onDuplicate={() => sys.duplicatePalette(sys.selectedPalette!.id)}
+                  onDelete={() => {
+                    sys.removePalette(sys.selectedPalette!.id);
+                    setPanelMode({ kind: "none" });
+                    sys.setSelectedPaletteId(null);
+                  }}
+                  onClose={() => {
+                    setPanelMode({ kind: "none" });
+                    sys.setSelectedPaletteId(null);
+                  }}
+                  showHeader={false}
+                />
+              </Content>
+            </Dialog>
+          )}
+        </DialogContainer>
       </div>
     </Provider>
   );

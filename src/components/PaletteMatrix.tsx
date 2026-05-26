@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { TooltipTrigger, Tooltip } from "@react-spectrum/s2/Tooltip";
 import { ActionButton } from "@react-spectrum/s2/ActionButton";
+import { Button } from "@react-spectrum/s2/Button";
 import type {
   GeneratedPaletteSystem,
   GeneratedPalette,
@@ -13,12 +14,13 @@ import type {
   CrossStepAudit,
 } from "../engines/types";
 import { HUE_ANCHOR_STEP } from "../engines/types";
-import { ChromaComparisonChart } from "./ChromaComparisonChart";
 
 interface Props {
   system: GeneratedPaletteSystem;
   selectedPaletteId: string | null;
   onSelectPalette: (id: string) => void;
+  onAddChromatic?: () => void;
+  onAddNeutral?: () => void;
 }
 
 function getStepMarker(
@@ -33,20 +35,21 @@ function getStepMarker(
   return undefined;
 }
 
+// SwatchCell: clicking only copies hex. Selection is via palette name row.
 function SwatchCell({
   color,
   marker,
   isSelected,
-  onPress,
+  isChromaPeak,
 }: {
   color: GeneratedColor;
   marker?: "hue" | "axis";
   isSelected: boolean;
-  onPress: () => void;
+  isChromaPeak: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const labelColor =
-    color.oklch.l > 0.55 ? "rgba(0,0,0,0.80)" : "rgba(255,255,255,0.90)";
+    color.oklch.l > 0.55 ? "rgba(0,0,0,0.75)" : "rgba(255,255,255,0.85)";
 
   return (
     <TooltipTrigger delay={500} placement="bottom">
@@ -55,39 +58,63 @@ function SwatchCell({
         onPress={() => {
           navigator.clipboard.writeText(color.hex).catch(() => {});
           setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-          onPress();
+          setTimeout(() => setCopied(false), 1100);
         }}
         UNSAFE_style={{
           backgroundColor: color.hex,
           width: "100%",
-          height: 72,
+          height: 64,
           minWidth: 0,
           borderRadius: 4,
           boxShadow: isSelected
-            ? `0 0 0 2px white, 0 0 0 4px #0066cc`
+            ? `0 0 0 2px white, 0 0 0 3.5px #0066cc`
             : marker === "axis"
-              ? `0 0 0 2px white, 0 0 0 3px rgba(0,0,0,0.35)`
+              ? `0 0 0 2px white, 0 0 0 2.5px rgba(0,0,0,0.30)`
               : marker === "hue"
-                ? `0 0 0 2px white, 0 0 0 3px ${color.hex}`
+                ? `0 0 0 2px white, 0 0 0 2.5px ${color.hex}`
                 : undefined,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "flex-end",
-          padding: "0 2px 6px",
+          padding: "0 2px 5px",
           cursor: "pointer",
           position: "relative",
           border: "none",
         }}
       >
+        {isChromaPeak && (
+          <span
+            style={{
+              position: "absolute",
+              top: 4,
+              right: 4,
+              fontSize: 8,
+              lineHeight: 1,
+              fontWeight: 800,
+              color: labelColor,
+              backgroundColor:
+                color.oklch.l > 0.55 ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.22)",
+              borderRadius: 999,
+              padding: "2px 4px",
+            }}
+          >
+            C
+          </span>
+        )}
         {marker === "hue" && (
-          <span style={{ position: "absolute", top: 5, fontSize: 8, color: labelColor }}>★</span>
+          <span style={{ position: "absolute", top: 4, fontSize: 7, color: labelColor }}>
+            ★
+          </span>
         )}
         {marker === "axis" && (
-          <span style={{ position: "absolute", top: 5, fontSize: 8, color: labelColor }}>⟺</span>
+          <span style={{ position: "absolute", top: 4, fontSize: 7, color: labelColor }}>
+            ⟺
+          </span>
         )}
-        <span style={{ color: labelColor, fontSize: 9, fontWeight: 600, fontFamily: "monospace" }}>
+        <span
+          style={{ color: labelColor, fontSize: 8.5, fontWeight: 600, fontFamily: "monospace" }}
+        >
           {copied ? "✓" : color.hex}
         </span>
       </ActionButton>
@@ -98,6 +125,12 @@ function SwatchCell({
           {color.hex}
           <br />
           oklch({color.oklch.l.toFixed(3)} {color.oklch.c.toFixed(3)} {color.oklch.h.toFixed(1)}°)
+          {isChromaPeak && (
+            <>
+              <br />
+              Peak C de esta paleta
+            </>
+          )}
           {color.deltaL !== null && (
             <>
               <br />
@@ -124,10 +157,13 @@ function PaletteRow({
   onSelect: () => void;
 }) {
   const mid = palette.colors[Math.floor(palette.colors.length / 2)];
+  const chromaPeakStep = palette.symmetryReport.chromaPeakStep;
   return (
     <>
+      {/* Name cell — clicking here selects the palette */}
       <div
         onClick={onSelect}
+        title="Clic para editar"
         style={{
           display: "flex",
           alignItems: "center",
@@ -135,14 +171,15 @@ function PaletteRow({
           padding: "0 8px",
           cursor: "pointer",
           borderRadius: 6,
-          backgroundColor: isSelected ? "rgba(0, 102, 204, 0.08)" : "transparent",
-          minWidth: 0,
+          backgroundColor: isSelected ? "rgba(0, 102, 204, 0.07)" : "transparent",
+          userSelect: "none",
+          transition: "background 0.1s",
         }}
       >
         <div
           style={{
-            width: 12,
-            height: 12,
+            width: 10,
+            height: 10,
             borderRadius: "50%",
             backgroundColor: mid?.hex ?? "#ccc",
             flexShrink: 0,
@@ -151,7 +188,7 @@ function PaletteRow({
         <div style={{ minWidth: 0 }}>
           <div
             style={{
-              fontSize: 12,
+              fontSize: 11.5,
               fontWeight: 600,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -161,19 +198,41 @@ function PaletteRow({
           >
             {palette.config.name}
           </div>
-          <div style={{ fontSize: 9, opacity: 0.5, textTransform: "uppercase" }}>{palette.config.type}</div>
+          <div style={{ fontSize: 9, opacity: 0.4, textTransform: "uppercase", lineHeight: 1.2 }}>
+            {palette.config.type}
+          </div>
         </div>
       </div>
+
+      {/* Swatches — clicking copies hex only */}
       {palette.colors.map((color) => (
         <SwatchCell
           key={color.step}
           color={color}
           marker={getStepMarker(color.step, kind)}
           isSelected={isSelected}
-          onPress={onSelect}
+          isChromaPeak={kind === "chromatic" && color.step === chromaPeakStep}
         />
       ))}
     </>
+  );
+}
+
+function AddPaletteRow({ label, onClick }: { label: string; onClick?: () => void }) {
+  if (!onClick) return null;
+  return (
+    <div
+      style={{
+        gridColumn: "1 / -1",
+        marginTop: 8,
+        display: "flex",
+        justifyContent: "flex-start",
+      }}
+    >
+      <Button variant="secondary" fillStyle="outline" onPress={onClick}>
+        + {label}
+      </Button>
+    </div>
   );
 }
 
@@ -186,7 +245,8 @@ function MatrixSection({
   kind,
   selectedPaletteId,
   onSelectPalette,
-  showChromaChart,
+  onAdd,
+  addLabel,
 }: {
   title: string;
   subtitle: string;
@@ -196,47 +256,73 @@ function MatrixSection({
   kind: "chromatic" | "neutral";
   selectedPaletteId: string | null;
   onSelectPalette: (id: string) => void;
-  showChromaChart?: boolean;
+  onAdd?: () => void;
+  addLabel?: string;
 }) {
-  if (palettes.length === 0) return null;
-
   const colCount = stepValues.length;
-  const gridTemplateColumns = `140px repeat(${colCount}, minmax(52px, 1fr))`;
+  const gridTemplateColumns = `130px repeat(${colCount}, minmax(48px, 1fr))`;
+  const isEmpty = palettes.length === 0;
 
   return (
-    <div style={{ marginBottom: 28 }}>
-      <div style={{ marginBottom: 12 }}>
-        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{title}</h3>
-        <p style={{ margin: "4px 0 0", fontSize: 11, opacity: 0.5 }}>{subtitle}</p>
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 10 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>{title}</h3>
+        <p style={{ margin: "3px 0 0", fontSize: 10.5, opacity: 0.45 }}>{subtitle}</p>
       </div>
+
       <div style={{ overflowX: "auto" }}>
         <div
           style={{
             display: "grid",
             gridTemplateColumns,
-            gap: "6px 4px",
-            minWidth: 600,
+            gap: "5px 3px",
+            minWidth: 560,
           }}
         >
-          <div style={{ fontSize: 10, opacity: 0.4, display: "flex", alignItems: "flex-end", paddingBottom: 4 }}>
+          {/* Column headers */}
+          <div
+            style={{
+              fontSize: 9.5,
+              opacity: 0.35,
+              display: "flex",
+              alignItems: "flex-end",
+              paddingBottom: 3,
+            }}
+          >
             Paleta
           </div>
           {stepValues.map((sv) => (
             <div
               key={sv.step}
               style={{
-                fontSize: 10,
+                fontSize: 9.5,
                 fontWeight: getStepMarker(sv.step, kind) ? 700 : 500,
                 textAlign: "center",
-                opacity: getStepMarker(sv.step, kind) ? 1 : 0.5,
-                paddingBottom: 4,
+                opacity: getStepMarker(sv.step, kind) ? 1 : 0.4,
+                paddingBottom: 3,
                 color: getStepMarker(sv.step, kind) === "hue" ? "#0066cc" : "inherit",
               }}
             >
               {sv.step}
-              {getStepMarker(sv.step, kind) === "axis" ? " ⟺" : ""}
             </div>
           ))}
+
+          {/* Empty state inside grid */}
+          {isEmpty && (
+            <div
+              style={{
+                gridColumn: "1 / -1",
+                padding: "20px 0",
+                textAlign: "center",
+                fontSize: 12,
+                opacity: 0.3,
+              }}
+            >
+              Sin paletas
+            </div>
+          )}
+
+          {/* Palette rows */}
           {palettes.map((palette) => (
             <PaletteRow
               key={palette.config.id}
@@ -246,40 +332,48 @@ function MatrixSection({
               onSelect={() => onSelectPalette(palette.config.id)}
             />
           ))}
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              opacity: 0.5,
-              display: "flex",
-              alignItems: "center",
-              paddingLeft: 8,
-              paddingTop: 4,
-            }}
-          >
-            L global
-          </div>
-          {stepValues.map((sv) => (
-            <div
-              key={sv.step}
-              style={{
-                fontSize: 10,
-                textAlign: "center",
-                opacity: 0.6,
-                fontFamily: "monospace",
-                paddingTop: 4,
-              }}
-            >
-              {sv.l.toFixed(3)}
-            </div>
-          ))}
-          {(audit.totalLWarnings > 0 || audit.totalCWarnings > 0) && (
+
+          {/* L global row */}
+          {!isEmpty && (
             <>
               <div
                 style={{
-                  fontSize: 10,
+                  fontSize: 9.5,
                   fontWeight: 600,
-                  opacity: 0.5,
+                  opacity: 0.4,
+                  display: "flex",
+                  alignItems: "center",
+                  paddingLeft: 8,
+                  paddingTop: 3,
+                }}
+              >
+                L global
+              </div>
+              {stepValues.map((sv) => (
+                <div
+                  key={sv.step}
+                  style={{
+                    fontSize: 9.5,
+                    textAlign: "center",
+                    opacity: 0.5,
+                    fontFamily: "monospace",
+                    paddingTop: 3,
+                  }}
+                >
+                  {sv.l.toFixed(3)}
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* Audit row (only if there are warnings) */}
+          {!isEmpty && (audit.totalLWarnings > 0 || audit.totalCWarnings > 0) && (
+            <>
+              <div
+                style={{
+                  fontSize: 9.5,
+                  fontWeight: 600,
+                  opacity: 0.4,
                   display: "flex",
                   alignItems: "center",
                   paddingLeft: 8,
@@ -293,7 +387,7 @@ function MatrixSection({
                   <div
                     key={row.step}
                     style={{
-                      fontSize: 11,
+                      fontSize: 10,
                       textAlign: "center",
                       color: hasWarning ? "#e06800" : "#28a745",
                       paddingTop: 2,
@@ -305,44 +399,38 @@ function MatrixSection({
               })}
             </>
           )}
+
+          {/* Add button spanning full width */}
+          <AddPaletteRow label={addLabel ?? "Agregar"} onClick={onAdd} />
         </div>
       </div>
-
-      {/* Chroma comparison chart (chromatic palettes only) */}
-      {showChromaChart && palettes.length > 0 && (
-        <ChromaComparisonChart
-          palettes={palettes}
-          selectedPaletteId={selectedPaletteId}
-        />
-      )}
     </div>
   );
 }
 
-export function PaletteMatrix({ system, selectedPaletteId, onSelectPalette }: Props) {
+export function PaletteMatrix({
+  system,
+  selectedPaletteId,
+  onSelectPalette,
+  onAddChromatic,
+  onAddNeutral,
+}: Props) {
   const chromaticPalettes = system.palettes.filter((p) => p.config.type === "chromatic");
   const neutralPalettes = system.palettes.filter((p) => p.config.type === "neutral");
-
-  if (system.palettes.length === 0) {
-    return (
-      <div style={{ padding: 48, textAlign: "center", opacity: 0.4, fontSize: 14 }}>
-        No hay paletas. Agrega una con el botón &quot;Agregar paleta&quot;.
-      </div>
-    );
-  }
 
   return (
     <div>
       <MatrixSection
         title="Paletas de color"
-        subtitle="12 pasos · eje L simétrico 500↔600 · peak C automático por hue · ★ = referencia de hue"
+        subtitle="12 pasos · eje L simétrico 500↔600 · ★ = hue ancla"
         stepValues={system.chromaticStepValues}
         palettes={chromaticPalettes}
         audit={system.chromaticAudit}
         kind="chromatic"
         selectedPaletteId={selectedPaletteId}
         onSelectPalette={onSelectPalette}
-        showChromaChart
+        onAdd={onAddChromatic}
+        addLabel="Agregar paleta de color"
       />
       <MatrixSection
         title="Paletas neutrales"
@@ -353,6 +441,8 @@ export function PaletteMatrix({ system, selectedPaletteId, onSelectPalette }: Pr
         kind="neutral"
         selectedPaletteId={selectedPaletteId}
         onSelectPalette={onSelectPalette}
+        onAdd={onAddNeutral}
+        addLabel="Agregar paleta neutral"
       />
     </div>
   );

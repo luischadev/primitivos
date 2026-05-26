@@ -78,36 +78,61 @@ function toCSSVars(palettes: GeneratedPalette[]): string {
   return lines.join("\n");
 }
 
+/** Slug for stable Figma-style IDs from palette id + step. */
+function figmaVariableSlug(paletteId: string, step: string): string {
+  return `${paletteId}-${step}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
 /**
- * Figma Variables JSON — compatible with community import plugins
- * that support the W3C Design Token format (DTCG).
+ * Figma Variables collection JSON — structure expected by Figma variable import plugins.
  */
 function toFigmaVariables(palettes: GeneratedPalette[]): string {
+  const modeId = "1:1";
   const variables: Record<string, unknown>[] = [];
+  const variableIds: string[] = [];
 
   for (const p of palettes) {
     for (const c of p.colors) {
       const { r, g, b } = toSRGBChannels(c.hex);
+      const rgba = { r, g, b, a: 1 };
+      const id = `VariableID:${figmaVariableSlug(p.config.id, c.step)}`;
+
+      variableIds.push(id);
+
       variables.push({
+        id,
         name: `${p.config.name}/${p.config.name} ${c.step}`,
+        description: "",
         type: "COLOR",
         valuesByMode: {
-          "1:1": { r, g, b, a: 1 },
+          [modeId]: rgba,
         },
         resolvedValuesByMode: {
-          "1:1": { resolvedValue: { r, g, b, a: 1 }, alias: null },
+          [modeId]: {
+            resolvedValue: rgba,
+            alias: null,
+          },
         },
+        scopes: [],
+        hiddenFromPublishing: false,
+        codeSyntax: {},
       });
     }
   }
 
-  const result = {
-    name: "Primitive Colors",
-    modes: [{ modeId: "1:1", name: "Value" }],
-    variables,
-  };
-
-  return JSON.stringify(result, null, 2);
+  return JSON.stringify(
+    {
+      id: "VariableCollectionId:primitive-colors",
+      name: "Primitive Colors",
+      modes: {
+        [modeId]: "Value",
+      },
+      variableIds,
+      variables,
+    },
+    null,
+    2,
+  );
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

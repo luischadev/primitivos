@@ -47,14 +47,24 @@ export function useSystem() {
   // ─── Palette operations ────────────────────────────────────────────────────
 
   const addPalette = useCallback(
-    (anchor: OKLCHColor, type: PaletteType = "chromatic") => {
+    (
+      anchor: OKLCHColor,
+      type: PaletteType = "chromatic",
+      customName?: string,
+      overrides?: Partial<PaletteConfig>,
+    ) => {
       setConfig((prev) => {
         const existingNames = prev.palettes.map((p) => p.name);
-        const suggested = type === "neutral" ? "neutral" : suggestPaletteNameFromHue(anchor.h);
+        const suggested =
+          customName?.trim() ||
+          (type === "neutral" ? "neutral" : suggestPaletteNameFromHue(anchor.h));
         const name = uniquePaletteName(suggested, existingNames);
 
         // Auto-suggest hue drift based on hue zone (orange gets natural light drift)
-        const drift = type === "chromatic" ? suggestHueDrift(anchor.h) : { hueDriftLight: 0, hueDriftDark: 0 };
+        const drift =
+          type === "chromatic"
+            ? suggestHueDrift(anchor.h)
+            : { hueDriftLight: 0, hueDriftDark: 0 };
 
         const newPalette: PaletteConfig = {
           id: crypto.randomUUID(),
@@ -64,6 +74,7 @@ export function useSystem() {
           chromaMultiplier: 1.0,
           ...drift,
           ...(type === "neutral" ? { neutralChroma: 0.005 } : {}),
+          ...overrides,
         };
 
         return { ...prev, palettes: [...prev.palettes, newPalette] };
