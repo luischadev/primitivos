@@ -240,18 +240,21 @@ export function PaletteEditor({
         </div>
       )}
 
-      {/* ── Neutral chroma ── */}
       {paletteConfig.type === "neutral" && (
         <div style={{ marginBottom: 18 }}>
           <Slider
-            label="Chroma neutral"
+            label="Saturación"
             value={paletteConfig.neutralChroma ?? 0}
             onChange={(v) => onUpdate({ neutralChroma: v })}
             minValue={0}
-            maxValue={0.05}
+            maxValue={0.025}
             step={0.001}
             formatOptions={{ minimumFractionDigits: 3, maximumFractionDigits: 3 }}
+            isEmphasized
           />
+          <p style={{ margin: "4px 0 0", fontSize: 10, opacity: 0.45, lineHeight: 1.3 }}>
+            Tinte sutil sobre la rampa neutral. Usa la rueda de hue para elegir el color.
+          </p>
         </div>
       )}
 
@@ -310,7 +313,7 @@ export function PaletteEditor({
           onChange={(checked) =>
             onUpdate({
               type: checked ? "neutral" : "chromatic",
-              ...(checked ? { neutralChroma: 0.005 } : {}),
+              ...(checked ? { neutralChroma: 0 } : {}),
             })
           }
         >

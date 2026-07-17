@@ -14,7 +14,7 @@ import type {
   StepName,
 } from "./types";
 import { HUE_ANCHOR_STEP } from "./types";
-import { easeInOutCubic } from "./colorConversions";
+import { easeInOutCubic, hexToOklch } from "./colorConversions";
 import { reduceChromaToGamut } from "./gamutEngine";
 import { getChromaPeakIndexByHue, buildHueAwareChromaticChromaBase } from "./scaleEngine";
 
@@ -139,7 +139,51 @@ export function generatePalette(
     }
   }
 
-  const colors: GeneratedColor[] = globalSteps.map(({ step, index, l, cBase }) => {
+  const colors: GeneratedColor[] = globalSteps.map(({ step, index, l, cBase, targetHex }) => {
+    if (config.type === "neutral" && targetHex) {
+      const base = hexToOklch(targetHex);
+      const tintC = config.neutralChroma ?? 0;
+
+      if (tintC <= 0.0001) {
+        return {
+          familyId: config.id,
+          familyName: config.name,
+          step,
+          index,
+          oklch: base,
+          hex: targetHex,
+          originalC: base.c,
+          resolvedC: base.c,
+          wasChromaReduced: false,
+          isInGamut: true,
+          deltaL: null,
+          deltaC: null,
+          deltaH: null,
+        };
+      }
+
+      // Keep Atlassian L per step; damp tint near pure white/black extremes.
+      const edgeDamp =
+        step === "0" || step === "1200" ? 0 : Math.min(1, Math.min(base.l, 1 - base.l) * 5);
+      const gamut = reduceChromaToGamut(base.l, tintC * edgeDamp, config.anchor.h);
+
+      return {
+        familyId: config.id,
+        familyName: config.name,
+        step,
+        index,
+        oklch: gamut.oklch,
+        hex: gamut.hex,
+        originalC: gamut.originalC,
+        resolvedC: gamut.resolvedC,
+        wasChromaReduced: gamut.wasChromaReduced,
+        isInGamut: gamut.isInGamut,
+        deltaL: null,
+        deltaC: null,
+        deltaH: null,
+      };
+    }
+
     let requestedC: number;
     if (config.type === "neutral") {
       requestedC = config.neutralChroma ?? 0;

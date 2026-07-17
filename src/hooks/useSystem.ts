@@ -4,7 +4,7 @@
 // Single source of truth for all configuration and generated output.
 // =============================================================================
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   createDefaultSystem,
   type PaletteSystemConfig,
@@ -17,6 +17,19 @@ import { generateSystem } from "../engines/systemEngine";
 import { adaptPalettesFromFigmaJson } from "../engines/importEngine";
 import { suggestPaletteNameFromHue, uniquePaletteName } from "../engines/namingEngine";
 import { getChromaPeakIndexByHue } from "../engines/scaleEngine";
+import {
+  loadProjectStore,
+  saveProjectStore,
+  getActiveProject,
+  updateActiveProjectConfig,
+  switchActiveProject,
+  addProject,
+  duplicateProject,
+  renameProject,
+  deleteProject,
+  uniqueProjectName,
+  type StoredProject,
+} from "../storage/projectStorage";
 
 /** Suggested hue drift for orange-zone hues that naturally shift toward yellow in light tones. */
 function suggestHueDrift(hue: number): { hueDriftLight: number; hueDriftDark: number } {
@@ -30,10 +43,121 @@ function suggestHueDrift(hue: number): { hueDriftLight: number; hueDriftDark: nu
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useSystem() {
-  const [config, setConfig] = useState<PaletteSystemConfig>(createDefaultSystem);
+  const initialStore = useMemo(() => loadProjectStore(), []);
+  const [projectStore, setProjectStore] = useState(initialStore);
+  const [config, setConfig] = useState<PaletteSystemConfig>(
+    () => getActiveProject(initialStore).config,
+  );
+  const skipAutosaveRef = useRef(false);
 
   // UI state — does not affect engine computation
   const [selectedPaletteId, setSelectedPaletteId] = useState<string | null>(null);
+
+  // Auto-save active project on every config change
+  useEffect(() => {
+    if (skipAutosaveRef.current) {
+      skipAutosaveRef.current = false;
+      return;
+    }
+    setProjectStore((prev) => {
+      const next = updateActiveProjectConfig(prev, config);
+      saveProjectStore(next);
+      return next;
+    });
+  }, [config]);
+
+  const activeProjectId = projectStore.activeProjectId;
+  const projects: StoredProject[] = projectStore.projects;
+
+  const switchProject = useCallback(
+    (projectId: string) => {
+      if (projectId === projectStore.activeProjectId) return;
+
+      let targetConfig: PaletteSystemConfig | null = null;
+      setProjectStore((prev) => {
+        const saved = updateActiveProjectConfig(prev, config);
+        const next = switchActiveProject(saved, projectId);
+        if (!next) return prev;
+        targetConfig = getActiveProject(next).config;
+        saveProjectStore(next);
+        return next;
+      });
+
+      if (targetConfig) {
+        skipAutosaveRef.current = true;
+        setConfig(targetConfig);
+        setSelectedPaletteId(null);
+      }
+    },
+    [config, projectStore.activeProjectId],
+  );
+
+  const createProject = useCallback(() => {
+    let targetConfig: PaletteSystemConfig | null = null;
+    setProjectStore((prev) => {
+      const saved = updateActiveProjectConfig(prev, config);
+      const name = uniqueProjectName(
+        `Proyecto ${saved.projects.length + 1}`,
+        saved.projects.map((p) => p.name),
+      );
+      const next = addProject(saved, name);
+      targetConfig = getActiveProject(next).config;
+      saveProjectStore(next);
+      return next;
+    });
+
+    if (targetConfig) {
+      skipAutosaveRef.current = true;
+      setConfig(targetConfig);
+      setSelectedPaletteId(null);
+    }
+  }, [config]);
+
+  const duplicateActiveProject = useCallback(() => {
+    let targetConfig: PaletteSystemConfig | null = null;
+    setProjectStore((prev) => {
+      const next = duplicateProject(prev, prev.activeProjectId, config);
+      if (!next) return prev;
+      targetConfig = getActiveProject(next).config;
+      saveProjectStore(next);
+      return next;
+    });
+
+    if (targetConfig) {
+      skipAutosaveRef.current = true;
+      setConfig(targetConfig);
+      setSelectedPaletteId(null);
+    }
+  }, [config]);
+
+  const renameActiveProject = useCallback((projectId: string, name: string) => {
+    setProjectStore((prev) => {
+      const next = renameProject(prev, projectId, name);
+      saveProjectStore(next);
+      return next;
+    });
+  }, []);
+
+  const deleteActiveProject = useCallback(
+    (projectId: string) => {
+      let targetConfig: PaletteSystemConfig | null = null;
+      setProjectStore((prev) => {
+        const saved = updateActiveProjectConfig(prev, config);
+        const next = deleteProject(saved, projectId);
+        if (!next) return prev;
+        targetConfig = getActiveProject(next).config;
+        saveProjectStore(next);
+        return next;
+      });
+
+      if (targetConfig) {
+        skipAutosaveRef.current = true;
+        setConfig(targetConfig);
+        setSelectedPaletteId(null);
+      }
+    },
+    [config],
+  );
 
   // Engine runs synchronously; useMemo re-runs whenever config changes
   const system = useMemo(() => {
@@ -74,7 +198,7 @@ export function useSystem() {
           anchor,
           chromaMultiplier: 1.0,
           ...drift,
-          ...(type === "neutral" ? { neutralChroma: 0.005 } : {}),
+          ...(type === "neutral" ? { neutralChroma: 0 } : {}),
           ...overrides,
         };
 
@@ -264,6 +388,13 @@ export function useSystem() {
   return {
     config,
     system,
+    projects,
+    activeProjectId,
+    switchProject,
+    createProject,
+    duplicateActiveProject,
+    renameActiveProject,
+    deleteActiveProject,
     selectedPaletteId,
     setSelectedPaletteId,
     selectedPalette,

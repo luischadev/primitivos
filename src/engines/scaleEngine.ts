@@ -4,7 +4,11 @@
 // =============================================================================
 
 import type { GlobalScaleConfig, GlobalStepValues, StepName } from "./types";
-import { easeInOutCubic, lerp } from "./colorConversions";
+import { ATLASSIAN_NEUTRAL_HEX } from "./types";
+import { buildDarkNeutralTargetHex } from "./darkNeutralEngine";
+import { easeInOutCubic, hexToOklch, lerp } from "./colorConversions";
+
+export type PaletteScaleKind = "chromatic" | "neutral" | "dark-neutral";
 
 // ─── Hue-aware chroma peak positioning ───────────────────────────────────────
 
@@ -116,18 +120,27 @@ function buildNeutralChromaBase(n: number): number[] {
 export function buildGlobalStepValues(
   config: GlobalScaleConfig,
   steps: StepName[],
-  paletteKind: "chromatic" | "neutral",
+  paletteKind: PaletteScaleKind,
 ): GlobalStepValues[] {
   const n = steps.length;
   if (n === 0) return [];
 
   const { lightnessRange, chromaCurve, lightnessCurve } = config;
-  const lValues = buildGlobalLightness(
-    n,
-    lightnessRange.lightest,
-    lightnessRange.darkest,
-    lightnessCurve,
-  );
+  const targetHexByStep =
+    paletteKind === "neutral"
+      ? ATLASSIAN_NEUTRAL_HEX
+      : paletteKind === "dark-neutral"
+        ? buildDarkNeutralTargetHex(steps)
+        : null;
+
+  const lValues = targetHexByStep
+    ? steps.map((step) => hexToOklch(targetHexByStep[step]).l)
+    : buildGlobalLightness(
+        n,
+        lightnessRange.lightest,
+        lightnessRange.darkest,
+        lightnessCurve,
+      );
 
   const cBaseValues =
     paletteKind === "chromatic"
@@ -139,5 +152,6 @@ export function buildGlobalStepValues(
     index,
     l: lValues[index],
     cBase: cBaseValues[index],
+    ...(targetHexByStep ? { targetHex: targetHexByStep[step] } : {}),
   }));
 }

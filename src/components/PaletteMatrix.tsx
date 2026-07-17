@@ -10,10 +10,23 @@ import type {
   GeneratedPaletteSystem,
   GeneratedPalette,
   GeneratedColor,
+  GeneratedAlphaPalette,
+  AlphaColor,
   GlobalStepValues,
   CrossStepAudit,
 } from "../engines/types";
-import { HUE_ANCHOR_STEP } from "../engines/types";
+import { DARK_NEUTRAL_FLOOR_HEX, HUE_ANCHOR_STEP } from "../engines/types";
+
+const CHECKERBOARD =
+  "repeating-conic-gradient(#cfcfcf 0% 25%, #ffffff 0% 50%) 50% / 12px 12px";
+
+const EMPTY_AUDIT: CrossStepAudit = {
+  rows: [],
+  lThreshold: 0,
+  cThreshold: 0,
+  totalLWarnings: 0,
+  totalCWarnings: 0,
+};
 
 interface Props {
   system: GeneratedPaletteSystem;
@@ -25,13 +38,14 @@ interface Props {
 
 function getStepMarker(
   step: string,
-  kind: "chromatic" | "neutral",
+  kind: "chromatic" | "neutral" | "dark-neutral",
 ): "hue" | "axis" | undefined {
   if (kind === "chromatic") {
     if (step === HUE_ANCHOR_STEP) return "hue";
     if (step === "600") return "axis";
   }
   if (kind === "neutral" && step === "500") return "axis";
+  if (kind === "dark-neutral" && step === "500") return "axis";
   return undefined;
 }
 
@@ -152,7 +166,7 @@ function PaletteRow({
   onSelect,
 }: {
   palette: GeneratedPalette;
-  kind: "chromatic" | "neutral";
+  kind: "chromatic" | "neutral" | "dark-neutral";
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -247,17 +261,19 @@ function MatrixSection({
   onSelectPalette,
   onAdd,
   addLabel,
+  readOnly = false,
 }: {
   title: string;
   subtitle: string;
   stepValues: GlobalStepValues[];
   palettes: GeneratedPalette[];
   audit: CrossStepAudit;
-  kind: "chromatic" | "neutral";
+  kind: "chromatic" | "neutral" | "dark-neutral";
   selectedPaletteId: string | null;
   onSelectPalette: (id: string) => void;
   onAdd?: () => void;
   addLabel?: string;
+  readOnly?: boolean;
 }) {
   const colCount = stepValues.length;
   const gridTemplateColumns = `130px repeat(${colCount}, minmax(48px, 1fr))`;
@@ -328,8 +344,8 @@ function MatrixSection({
               key={palette.config.id}
               palette={palette}
               kind={kind}
-              isSelected={selectedPaletteId === palette.config.id}
-              onSelect={() => onSelectPalette(palette.config.id)}
+              isSelected={!readOnly && selectedPaletteId === palette.config.id}
+              onSelect={readOnly ? () => {} : () => onSelectPalette(palette.config.id)}
             />
           ))}
 
@@ -401,7 +417,187 @@ function MatrixSection({
           )}
 
           {/* Add button spanning full width */}
-          <AddPaletteRow label={addLabel ?? "Agregar"} onClick={onAdd} />
+          {onAdd && <AddPaletteRow label={addLabel ?? "Agregar"} onClick={onAdd} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AlphaSwatch({ color, canvasHex }: { color: AlphaColor; canvasHex: string }) {
+  const [copied, setCopied] = useState(false);
+  const pct = Math.round(color.alpha * 100);
+  const labelColor =
+    color.alpha > 0.45 ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.7)";
+
+  return (
+    <TooltipTrigger delay={500} placement="bottom">
+      <ActionButton
+        aria-label={`${color.step}A: ${color.hex8}`}
+        onPress={() => {
+          navigator.clipboard.writeText(color.hex8).catch(() => {});
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1100);
+        }}
+        UNSAFE_style={{
+          background: CHECKERBOARD,
+          width: "100%",
+          height: 64,
+          minWidth: 0,
+          borderRadius: 4,
+          padding: 0,
+          cursor: "pointer",
+          border: "none",
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            padding: "0 2px 5px",
+            backgroundColor: `rgba(${Math.round(color.rgba.r * 255)}, ${Math.round(color.rgba.g * 255)}, ${Math.round(color.rgba.b * 255)}, ${color.alpha})`,
+          }}
+        >
+          <span
+            style={{ color: labelColor, fontSize: 8.5, fontWeight: 600, fontFamily: "monospace" }}
+          >
+            {copied ? "✓" : `${pct}%`}
+          </span>
+        </div>
+      </ActionButton>
+      <Tooltip>
+        <div style={{ fontFamily: "monospace", fontSize: 11, lineHeight: 1.6 }}>
+          <strong>{color.step}A</strong>
+          <br />
+          {color.hex8}
+          <br />
+          alpha {color.alpha} ({pct}%)
+          <br />
+          sobre {canvasHex} → {color.compositeHex}
+        </div>
+      </Tooltip>
+    </TooltipTrigger>
+  );
+}
+
+function AlphaSection({
+  title,
+  subtitle,
+  alpha,
+}: {
+  title: string;
+  subtitle: string;
+  alpha: GeneratedAlphaPalette;
+}) {
+  const colCount = alpha.colors.length;
+  const gridTemplateColumns = `130px repeat(${colCount}, minmax(48px, 1fr))`;
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 10 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700 }}>{title}</h3>
+        <p style={{ margin: "3px 0 0", fontSize: 10.5, opacity: 0.45 }}>{subtitle}</p>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns,
+            gap: "5px 3px",
+            minWidth: 560,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 9.5,
+              opacity: 0.35,
+              display: "flex",
+              alignItems: "flex-end",
+              paddingBottom: 3,
+            }}
+          >
+            Paleta
+          </div>
+          {alpha.colors.map((c) => (
+            <div
+              key={c.step}
+              style={{
+                fontSize: 9.5,
+                fontWeight: 500,
+                textAlign: "center",
+                opacity: 0.4,
+                paddingBottom: 3,
+              }}
+            >
+              {c.step}A
+            </div>
+          ))}
+
+          {/* Alpha row */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "0 8px",
+              userSelect: "none",
+            }}
+          >
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                backgroundColor: alpha.baseHex,
+                flexShrink: 0,
+              }}
+            />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 600 }}>{alpha.name}</div>
+              <div style={{ fontSize: 9, opacity: 0.4, textTransform: "uppercase", lineHeight: 1.2 }}>
+                base {alpha.baseStep}
+              </div>
+            </div>
+          </div>
+          {alpha.colors.map((c) => (
+            <AlphaSwatch key={c.step} color={c} canvasHex={alpha.canvasHex} />
+          ))}
+
+          {/* Opacity row */}
+          <div
+            style={{
+              fontSize: 9.5,
+              fontWeight: 600,
+              opacity: 0.4,
+              display: "flex",
+              alignItems: "center",
+              paddingLeft: 8,
+              paddingTop: 3,
+            }}
+          >
+            Opacidad
+          </div>
+          {alpha.colors.map((c) => (
+            <div
+              key={c.step}
+              style={{
+                fontSize: 9.5,
+                textAlign: "center",
+                opacity: 0.5,
+                fontFamily: "monospace",
+                paddingTop: 3,
+              }}
+            >
+              {c.alpha.toFixed(3)}
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -434,7 +630,7 @@ export function PaletteMatrix({
       />
       <MatrixSection
         title="Paletas neutrales"
-        subtitle="15 pasos · croma muy bajo · misma curva L global"
+        subtitle="15 pasos · 0=#FFF · 1200=#000 · equivalencia por step"
         stepValues={system.neutralStepValues}
         palettes={neutralPalettes}
         audit={system.neutralAudit}
@@ -444,6 +640,33 @@ export function PaletteMatrix({
         onAdd={onAddNeutral}
         addLabel="Agregar paleta neutral"
       />
+      {system.darkNeutral && (
+        <MatrixSection
+          title="Dark neutral"
+          subtitle={`15 pasos · 0=${DARK_NEUTRAL_FLOOR_HEX} · 1200=#FFF · espejo sRGB de neutral`}
+          stepValues={system.darkNeutralStepValues}
+          palettes={[system.darkNeutral]}
+          audit={EMPTY_AUDIT}
+          kind="dark-neutral"
+          selectedPaletteId={null}
+          onSelectPalette={() => {}}
+          readOnly
+        />
+      )}
+      {system.neutralAlpha && (
+        <AlphaSection
+          title="Neutral alpha"
+          subtitle={`${system.neutralAlpha.colors.length} pasos · opacidad sobre ${system.neutralAlpha.canvasHex} · base step ${system.neutralAlpha.baseStep}`}
+          alpha={system.neutralAlpha}
+        />
+      )}
+      {system.darkNeutralAlpha && (
+        <AlphaSection
+          title="Dark neutral alpha"
+          subtitle={`${system.darkNeutralAlpha.colors.length} pasos · opacidad sobre ${system.darkNeutralAlpha.canvasHex} · base step ${system.darkNeutralAlpha.baseStep}`}
+          alpha={system.darkNeutralAlpha}
+        />
+      )}
     </div>
   );
 }

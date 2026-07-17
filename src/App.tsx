@@ -18,6 +18,7 @@ import { PaletteEditor } from "./components/PaletteEditor";
 import { PalettePreview } from "./components/PalettePreview";
 import { SystemInsights } from "./components/SystemInsights";
 import { SystemCurveOverview } from "./components/SystemCurveOverview";
+import { ProjectSelector } from "./components/ProjectSelector";
 import { exportSystem } from "./engines/exportEngine";
 import { FigmaImportError } from "./engines/importEngine";
 import { generateSystemInsights } from "./engines/insightEngine";
@@ -25,7 +26,7 @@ import { suggestPaletteNameFromHue } from "./engines/namingEngine";
 import { hexToOklch, hslToHex } from "./engines/colorConversions";
 import { buildGlobalStepValues } from "./engines/scaleEngine";
 import { generatePalette } from "./engines/paletteEngine";
-import { CHROMATIC_STEPS, NEUTRAL_STEPS } from "./engines/types";
+import { CHROMATIC_STEPS, NEUTRAL_STEPS, DARK_NEUTRAL_PALETTE_ID } from "./engines/types";
 import type { ExportFormat, GlobalScaleConfig, PaletteConfig, PaletteType } from "./engines/types";
 
 // ─── Panel mode ───────────────────────────────────────────────────────────────
@@ -91,7 +92,7 @@ function AddPaletteForm({
       chromaMultiplier,
       hueDriftLight,
       hueDriftDark,
-      ...(paletteType === "neutral" ? { neutralChroma: 0.005 } : {}),
+      ...(paletteType === "neutral" ? { neutralChroma: 0 } : {}),
     };
 
     return generatePalette(steps, config, {
@@ -364,6 +365,7 @@ function ExportButton({ onExport }: { onExport: (format: ExportFormat) => void }
     { key: "json-full", label: "JSON completo (OKLCH)" },
     { key: "css-vars", label: "CSS custom properties" },
     { key: "figma-variables", label: "Variables Figma" },
+    { key: "figma-json", label: "Figma JSON" },
   ];
   return (
     <div style={{ position: "relative" }}>
@@ -455,6 +457,7 @@ export default function App() {
 
   // ── Selection handling ───────────────────────────────────────────────────
   const handleSelectPalette = (id: string) => {
+    if (id === DARK_NEUTRAL_PALETTE_ID) return;
     if (panelMode.kind === "edit" && sys.selectedPaletteId === id) {
       // Toggle: click same palette closes the panel
       setPanelMode({ kind: "none" });
@@ -545,17 +548,27 @@ export default function App() {
             backgroundColor: "white",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, minWidth: 0, flex: 1 }}>
             <span
               style={{
                 fontSize: 14,
                 fontWeight: 800,
                 letterSpacing: "-0.01em",
                 color: "#111",
+                flexShrink: 0,
               }}
             >
               Primitivos
             </span>
+            <ProjectSelector
+              projects={sys.projects}
+              activeProjectId={sys.activeProjectId}
+              onSelectProject={sys.switchProject}
+              onCreateProject={sys.createProject}
+              onDuplicateProject={sys.duplicateActiveProject}
+              onRenameProject={sys.renameActiveProject}
+              onDeleteProject={sys.deleteActiveProject}
+            />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Button

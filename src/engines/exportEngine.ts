@@ -3,7 +3,24 @@
 // Export a GeneratedPaletteSystem to various formats.
 // =============================================================================
 
-import type { GeneratedPaletteSystem, GeneratedPalette, ExportFormat } from "./types";
+import type {
+  GeneratedPaletteSystem,
+  GeneratedPalette,
+  GeneratedAlphaPalette,
+  ExportFormat,
+} from "./types";
+
+function palettesForExport(system: GeneratedPaletteSystem): GeneratedPalette[] {
+  return system.darkNeutral
+    ? [...system.palettes, system.darkNeutral]
+    : system.palettes;
+}
+
+function alphaPalettesForExport(system: GeneratedPaletteSystem): GeneratedAlphaPalette[] {
+  return [system.neutralAlpha, system.darkNeutralAlpha].filter(
+    (p): p is GeneratedAlphaPalette => p !== null,
+  );
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -29,7 +46,10 @@ function toSRGBChannels(hex: string): { r: number; g: number; b: number } {
 
 // ─── Format generators ────────────────────────────────────────────────────────
 
-function toJsonSimple(palettes: GeneratedPalette[]): string {
+function toJsonSimple(
+  palettes: GeneratedPalette[],
+  alphaPalettes: GeneratedAlphaPalette[],
+): string {
   const out: Record<string, Record<string, string>> = {};
   for (const p of palettes) {
     out[p.config.name] = {};
@@ -37,10 +57,19 @@ function toJsonSimple(palettes: GeneratedPalette[]): string {
       out[p.config.name][c.step] = c.hex;
     }
   }
+  for (const p of alphaPalettes) {
+    out[p.name] = {};
+    for (const c of p.colors) {
+      out[p.name][`${c.step}A`] = c.hex8;
+    }
+  }
   return JSON.stringify(out, null, 2);
 }
 
-function toJsonFull(palettes: GeneratedPalette[]): string {
+function toJsonFull(
+  palettes: GeneratedPalette[],
+  alphaPalettes: GeneratedAlphaPalette[],
+): string {
   const out: Record<string, Record<string, unknown>> = {};
   for (const p of palettes) {
     out[p.config.name] = {};
@@ -60,10 +89,25 @@ function toJsonFull(palettes: GeneratedPalette[]): string {
       };
     }
   }
+  for (const p of alphaPalettes) {
+    out[p.name] = {};
+    for (const c of p.colors) {
+      out[p.name][`${c.step}A`] = {
+        hex8: c.hex8,
+        baseHex: p.baseHex,
+        alpha: c.alpha,
+        rgba: c.rgba,
+        compositeHex: c.compositeHex,
+      };
+    }
+  }
   return JSON.stringify(out, null, 2);
 }
 
-function toCSSVars(palettes: GeneratedPalette[]): string {
+function toCSSVars(
+  palettes: GeneratedPalette[],
+  alphaPalettes: GeneratedAlphaPalette[],
+): string {
   const lines: string[] = [":root {"];
   for (const p of palettes) {
     lines.push(`  /* ${p.config.name} */`);
@@ -74,8 +118,74 @@ function toCSSVars(palettes: GeneratedPalette[]): string {
       );
     }
   }
+  for (const p of alphaPalettes) {
+    lines.push(`  /* ${p.name} — base ${p.baseHex} */`);
+    for (const c of p.colors) {
+      const { r, g, b, a } = c.rgba;
+      lines.push(
+        `  --${p.name}-${c.step}A: ${c.hex8}; /* rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${a}) */`,
+      );
+    }
+  }
   lines.push("}");
   return lines.join("\n");
+}
+
+type FigmaColorToken = {
+  $type: "color";
+  $value: {
+    colorSpace: "srgb";
+    components: [number, number, number];
+    alpha: number;
+    hex: string;
+  };
+};
+
+function toFigmaJson(
+  palettes: GeneratedPalette[],
+  alphaPalettes: GeneratedAlphaPalette[],
+): string {
+  const out: Record<string, Record<string, FigmaColorToken>> = {};
+
+  for (const p of palettes) {
+    out[p.config.name] = {};
+    for (const c of p.colors) {
+      const { r, g, b } = toSRGBChannels(c.hex);
+      out[p.config.name][`${p.config.name} ${c.step}`] = {
+        $type: "color",
+        $value: {
+          colorSpace: "srgb",
+          components: [r, g, b],
+          alpha: 1,
+          hex: c.hex.toUpperCase(),
+        },
+      };
+    }
+  }
+
+  toFigmaJsonAlpha(out, alphaPalettes);
+
+  return JSON.stringify(out, null, 2);
+}
+
+function toFigmaJsonAlpha(
+  out: Record<string, Record<string, FigmaColorToken>>,
+  alphaPalettes: GeneratedAlphaPalette[],
+): void {
+  for (const p of alphaPalettes) {
+    out[p.name] = {};
+    for (const c of p.colors) {
+      out[p.name][`${p.name} ${c.step}A`] = {
+        $type: "color",
+        $value: {
+          colorSpace: "srgb",
+          components: [c.rgba.r, c.rgba.g, c.rgba.b],
+          alpha: c.rgba.a,
+          hex: c.hex8,
+        },
+      };
+    }
+  }
 }
 
 /** Slug for stable Figma-style IDs from palette id + step. */
@@ -86,37 +196,58 @@ function figmaVariableSlug(paletteId: string, step: string): string {
 /**
  * Figma Variables collection JSON — structure expected by Figma variable import plugins.
  */
-function toFigmaVariables(palettes: GeneratedPalette[]): string {
+function toFigmaVariables(
+  palettes: GeneratedPalette[],
+  alphaPalettes: GeneratedAlphaPalette[],
+): string {
   const modeId = "1:1";
   const variables: Record<string, unknown>[] = [];
   const variableIds: string[] = [];
 
+  const pushVariable = (
+    id: string,
+    name: string,
+    rgba: { r: number; g: number; b: number; a: number },
+  ) => {
+    variableIds.push(id);
+    variables.push({
+      id,
+      name,
+      description: "",
+      type: "COLOR",
+      valuesByMode: {
+        [modeId]: rgba,
+      },
+      resolvedValuesByMode: {
+        [modeId]: {
+          resolvedValue: rgba,
+          alias: null,
+        },
+      },
+      scopes: [],
+      hiddenFromPublishing: false,
+      codeSyntax: {},
+    });
+  };
+
   for (const p of palettes) {
     for (const c of p.colors) {
       const { r, g, b } = toSRGBChannels(c.hex);
-      const rgba = { r, g, b, a: 1 };
-      const id = `VariableID:${figmaVariableSlug(p.config.id, c.step)}`;
+      pushVariable(
+        `VariableID:${figmaVariableSlug(p.config.id, c.step)}`,
+        `${p.config.name}/${p.config.name} ${c.step}`,
+        { r, g, b, a: 1 },
+      );
+    }
+  }
 
-      variableIds.push(id);
-
-      variables.push({
-        id,
-        name: `${p.config.name}/${p.config.name} ${c.step}`,
-        description: "",
-        type: "COLOR",
-        valuesByMode: {
-          [modeId]: rgba,
-        },
-        resolvedValuesByMode: {
-          [modeId]: {
-            resolvedValue: rgba,
-            alias: null,
-          },
-        },
-        scopes: [],
-        hiddenFromPublishing: false,
-        codeSyntax: {},
-      });
+  for (const p of alphaPalettes) {
+    for (const c of p.colors) {
+      pushVariable(
+        `VariableID:${figmaVariableSlug(p.name, `${c.step}a`)}`,
+        `${p.name}/${p.name} ${c.step}A`,
+        c.rgba,
+      );
     }
   }
 
@@ -138,14 +269,18 @@ function toFigmaVariables(palettes: GeneratedPalette[]): string {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export function exportSystem(system: GeneratedPaletteSystem, format: ExportFormat): string {
+  const palettes = palettesForExport(system);
+  const alphaPalettes = alphaPalettesForExport(system);
   switch (format) {
     case "json-simple":
-      return toJsonSimple(system.palettes);
+      return toJsonSimple(palettes, alphaPalettes);
     case "json-full":
-      return toJsonFull(system.palettes);
+      return toJsonFull(palettes, alphaPalettes);
     case "css-vars":
-      return toCSSVars(system.palettes);
+      return toCSSVars(palettes, alphaPalettes);
     case "figma-variables":
-      return toFigmaVariables(system.palettes);
+      return toFigmaVariables(palettes, alphaPalettes);
+    case "figma-json":
+      return toFigmaJson(palettes, alphaPalettes);
   }
 }

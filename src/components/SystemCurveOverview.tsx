@@ -4,7 +4,7 @@
 // =============================================================================
 
 import type { GeneratedPalette, GlobalScaleConfig, GlobalStepValues } from "../engines/types";
-import { CHROMATIC_STEPS, NEUTRAL_STEPS } from "../engines/types";
+import { CHROMATIC_STEPS, NEUTRAL_STEPS, DARK_NEUTRAL_STEPS } from "../engines/types";
 import { buildGlobalStepValues } from "../engines/scaleEngine";
 import { ChromaComparisonChart } from "./ChromaComparisonChart";
 
@@ -84,12 +84,14 @@ export function SystemCurveOverview({
 }) {
   const chromaticCurve = buildGlobalStepValues(globalScale, CHROMATIC_STEPS, "chromatic");
   const neutralCurve = buildGlobalStepValues(globalScale, NEUTRAL_STEPS, "neutral");
+  const darkNeutralCurve = buildGlobalStepValues(globalScale, DARK_NEUTRAL_STEPS, "dark-neutral");
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(240px, 1.2fr) minmax(180px, 0.8fr) minmax(180px, 0.8fr)",
+        gridTemplateColumns:
+          "minmax(240px, 1.2fr) minmax(160px, 0.7fr) minmax(160px, 0.7fr) minmax(160px, 0.7fr)",
         gap: 12,
         alignItems: "end",
       }}
@@ -100,7 +102,8 @@ export function SystemCurveOverview({
         compact
       />
       <LightnessMiniChart title="L cromáticas" values={chromaticCurve} />
-      <LightnessMiniChart title="L neutrales" values={neutralCurve} />
+      <LightnessMiniChart title="L neutral" values={neutralCurve} />
+      <LightnessMiniChart title="L dark neutral" values={darkNeutralCurve} />
     </div>
   );
 }

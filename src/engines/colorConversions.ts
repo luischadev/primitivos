@@ -159,3 +159,35 @@ export function hexToOklch(hex: string): OKLCHColor {
 
   return { l: L, c, h };
 }
+
+/**
+ * Mirror neutral spacing from white, lifted from a dark floor instead of #000.
+ * Per channel: floor + (255 − neutral), clamped to sRGB.
+ */
+export function liftedInvertNeutralHex(floorHex: string, neutralHex: string): string {
+  const parse = (hex: string) => {
+    const h = hex.replace("#", "");
+    return [
+      parseInt(h.slice(0, 2), 16),
+      parseInt(h.slice(2, 4), 16),
+      parseInt(h.slice(4, 6), 16),
+    ] as const;
+  };
+  const [fr, fg, fb] = parse(floorHex);
+  const [nr, ng, nb] = parse(neutralHex);
+  const lift = (f: number, n: number) =>
+    Math.min(255, f + (255 - n)).toString(16).padStart(2, "0");
+  return `#${lift(fr, nr)}${lift(fg, ng)}${lift(fb, nb)}`;
+}
+
+/**
+ * Invert a neutral sRGB gray hex across the black↔white axis (per channel).
+ */
+export function invertNeutralHex(hex: string): string {
+  return liftedInvertNeutralHex("#000000", hex);
+}
+
+/** Neutral gray OKLCH → hex (C=0). */
+export function neutralLToHex(l: number): string {
+  return oklchToHex({ l, c: 0, h: 0 });
+}
